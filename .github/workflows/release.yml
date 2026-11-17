@@ -66,10 +66,7 @@ jobs:
         include:
           # Linux on the oldest Ubuntu we can: the app links the system's
           # glibc, so this sets how old a distro it runs on.
-          - { target: linux-x86_64, runner: ubuntu-22.04 }
-          - { target: linux-aarch64, runner: ubuntu-22.04-arm }
           - { target: macos-aarch64, runner: macos-15 }
-          - { target: windows-x86_64, runner: windows-2022 }
     runs-on: ${{ matrix.runner }}
     # Only tags can access the release environment's Apple certificate.
     environment: ${{ github.ref_type == 'tag' && 'release' || 'build' }}
