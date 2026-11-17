@@ -1,0 +1,81 @@
+name: native source candidate
+on:
+  push:
+    branches: [lue/herdr-macos-candidate-a2]
+permissions:
+  contents: read
+concurrency:
+  group: native-source-candidate
+  cancel-in-progress: false
+env:
+  RUST_TOOLCHAIN: 1.95.0
+  ZIG_VERSION: 0.16.0
+  CARGO_BUILD_JOBS: 2
+jobs:
+  macos-source-build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: true
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Restore existing native build cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: native-source-macos-${{ github.sha }}
+          restore-keys: |
+            release-v2-macos-aarch64-${{ env.RUST_TOOLCHAIN }}-zig${{ env.ZIG_VERSION }}-
+            ci-v2-macos-aarch64-${{ env.RUST_TOOLCHAIN }}-zig${{ env.ZIG_VERSION }}-
+      - name: Verify landed production source identity
+        run: |
+          git diff --exit-code 1ab3d380d652c14268a89aac30d24bfd85420e29 HEAD -- . ':!.github/workflows/native-source-candidate.yml'
+          scripts/ci-sources restore
+      - name: Build source equivalent with updates disabled
+        run: |
+          unset HERDR_APP_RELEASE
+          cargo build --release --locked
+          git diff --exit-code -- Cargo.lock
+          mkdir -p dist
+          cp target/release/herdr-app dist/herdr-app
+          cp LICENSE THIRD-PARTY-NOTICES dist/
+          dist/herdr-app --version
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          binary = pathlib.Path('dist/herdr-app')
+          doc = {
+            'workflow_head': os.environ['GITHUB_SHA'],
+            'production_source': '1ab3d380d652c14268a89aac30d24bfd85420e29',
+            'profile': 'release',
+            'rust': subprocess.check_output(['rustc', '--version'], text=True).strip(),
+            'zig': subprocess.check_output(['zig', 'version'], text=True).strip(),
+            'updates_enabled': False,
+            'HERDR_APP_RELEASE_present': 'HERDR_APP_RELEASE' in os.environ,
+            'sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+          }
+          assert not doc['HERDR_APP_RELEASE_present']
+          pathlib.Path('dist/build.json').write_text(json.dumps(doc, indent=2) + '\n')
+          print(json.dumps(doc))
+          PY
+          tar -czf native-source-macos-aarch64.tar.gz -C dist herdr-app LICENSE THIRD-PARTY-NOTICES build.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: native-source-macos-aarch64
+          path: native-source-macos-aarch64.tar.gz
+          if-no-files-found: error
+          retention-days: 7
