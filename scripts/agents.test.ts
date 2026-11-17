@@ -210,15 +210,17 @@ for (const sort of ["priority", "grouped"]) for (const named of [false, true]) t
 });
 
 // A kept sub-agent: started by t1 (`hc run`), then given a pane (`terminal.keep`).
-function keptRender(sort: string, { width = 268, kept = [{ address: "t3", parent: "t1" }], paneless = [] as { address: string; parent: string }[], pinned = [] as string[] } = {}) {
+function keptRender(sort: string, { width = 268, kept = [{ address: "t3", parent: "t1" }], paneless = [] as { address: string; parent: string; status?: string }[], pinned = [] as string[] } = {}) {
   const program = { name: "Claude", key: "claude", agent: true };
   const row = (address: string, seq: number) => ({ address, pane: `p-${address}`, tab: "tab1", space: "s1", space_name: "Project", program, title: `Task ${address}`, status: "working", seq, pinned: pinned.includes(address) });
   const list = [row("t1", 1), ...kept.map((k, i) => row(k.address, i + 2))];
-  const live = (address: string, parent: string | null) => ({ address, parent, state: "live", status: "working", program, labels: {} });
+  // Keeping a terminal labels it with its place; a pane-less one carries no place.
+  const live = (address: string, parent: string | null, labels = {}, status = "working") => ({ address, parent, state: "live", status, program, labels });
+  const place = { "herdr.space": "s1", "herdr.tab": "tab1" };
   const orders: string[][] = [];
   const { agents, writes } = harness([], {
     agents: () => list,
-    terminals: () => [live("t1", null), ...paneless.map(k => live(k.address, k.parent)), ...kept.map(k => live(k.address, k.parent))],
+    terminals: () => [live("t1", null, place), ...paneless.map(k => live(k.address, k.parent, {}, k.status)), ...kept.map(k => live(k.address, k.parent, place))],
     panes: () => list.map(a => ({ tab: a.tab, terminal: a.address, program, title: a.title })), focused: () => null,
     spaces: () => [{ tabs: [{ id: "tab1", name: "Project", named: true }] }],
     layout: () => ({ id: "sidebar", size: { px: width } }), shared: () => sort,
@@ -250,11 +252,22 @@ for (const sort of ["priority", "grouped"]) test(`${sort}: a kept sub-agent show
   expect(writes).toContainEqual(["pane.focus", { terminal: "t3" }]);
 });
 
-for (const sort of ["priority", "grouped"]) test(`${sort}: a kept sub-agent under a pane-less one shows once in the tree`, () => {
+for (const sort of ["priority", "grouped"]) test(`${sort}: an unlabeled child is not listed and doesn't raise its parent`, () => {
+  const { ids, texts } = keptRender(sort, { kept: [], paneless: [{ address: "t3", parent: "t1", status: "blocked" }] });
+  expect(ids).toContain("ag-t1");
+  expect(ids).not.toContain("sub-t3");
+  expect(ids).not.toContain("ag-t3");
+  expect(ids).not.toContain("fold-t1");
+  expect(ids).not.toContain("sec-4");
+  if (sort === "priority") expect(ids).toContain("sec-2");
+  expect([...texts.values()].join(" ")).not.toContain("Needs you");
+});
+
+for (const sort of ["priority", "grouped"]) test(`${sort}: a kept sub-agent under an unlabeled one keeps its own row`, () => {
   const { ids } = keptRender(sort, { paneless: [{ address: "t3", parent: "t1" }], kept: [{ address: "t4", parent: "t3" }] });
-  expect(ids).toContain("sub-t3");
-  expect(ids).toContain("sub-t4");
-  expect(ids).not.toContain("ag-t4");
+  expect(ids).not.toContain("sub-t3");
+  expect(ids).not.toContain("sub-t4");
+  expect(ids).toContain("ag-t4");
 });
 
 for (const sort of ["priority", "grouped"]) test(`${sort}: a kept sub-agent keeps its own row where no tree shows it`, () => {

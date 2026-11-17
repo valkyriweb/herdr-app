@@ -158,8 +158,10 @@ the highlighted line shows where it will land.
   records the starter as `parent` (see `terminals()`). Parent addresses use
   the app's machine names, or a bare ID for this computer, when they can be
   mapped; otherwise they stay as the core reported them. They belong to their
-  parent's tab without a pane; the `agents` mod shows them,
-  `terminal.peek` opens one, `terminal.keep` gives one a pane.
+  parent's tab without a pane. The `agents` mod lists only sub-agents
+  labeled `herdr.space` (kept in a pane) under their parent; an unlabeled
+  one (a background worker) is not listed and doesn't raise its parent's
+  status. `terminal.peek` opens one, `terminal.keep` gives one a pane.
   Ctrl-click (Cmd-click on macOS) a live terminal address in terminal text to
   peek at it. Bare addresses refer to the machine of the terminal showing them;
   use `machine/address` for another machine. Names and non-live addresses aren't links.
