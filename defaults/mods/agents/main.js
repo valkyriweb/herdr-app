@@ -168,8 +168,10 @@ export default class Agents extends View {
   }
 
   // Live sub-agents of `addr`, depth first, each with the tree lines in front of it.
+  // Only those labeled `herdr.space` (kept in a pane) are in the window; an unlabeled
+  // one (a background worker, a test fixture) stays hidden and doesn't raise its parent.
   tree(all, addr, lead = []) {
-    const kids = all.filter((k) => k.parent === addr && k.state === "live");
+    const kids = all.filter((k) => k.parent === addr && k.state === "live" && Boolean(k.labels?.["herdr.space"]));
     return kids.flatMap((k, i) => {
       const last = i === kids.length - 1;
       return [
