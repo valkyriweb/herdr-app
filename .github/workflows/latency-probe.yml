@@ -1,0 +1,88 @@
+name: latency-probe
+
+on:
+  push:
+    branches: [lue/herdr-latency-proof-a2]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: herdr-latency-proof-a2
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.95.0
+  ZIG_VERSION: 0.16.0
+  CARGO_PROFILE_DEV_DEBUG: "1"
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "2"
+
+jobs:
+  measure:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          submodules: true
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Restore existing Linux CI cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ci-v2-linux-x86_64-${{ env.RUST_TOOLCHAIN }}-zig${{ env.ZIG_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'vendor/**', 'crates/**', '.github/workflows/ci.yml') }}
+          restore-keys: ci-v2-linux-x86_64-${{ env.RUST_TOOLCHAIN }}-zig${{ env.ZIG_VERSION }}-
+      - name: Linux native and private-display dependencies
+        timeout-minutes: 10
+        run: |
+          scripts/ci-apt \
+            pkg-config clang libclang-dev \
+            libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libvulkan-dev mesa-vulkan-drivers libfontconfig-dev libfreetype-dev \
+            weston xwayland
+      - name: Validate deterministic probe contracts
+        run: |
+          bash -n ci-probe/build-pair.sh ci-probe/fetch-core.sh
+          python3 ci-probe/scan_stall_probe.py --self-check
+      - name: Fetch pinned public core
+        timeout-minutes: 8
+        run: bash ci-probe/fetch-core.sh "$RUNNER_TEMP/herdr-latency-proof"
+      - name: Keep unchanged sources fresh
+        run: scripts/ci-sources restore
+      - name: Build exact baseline and fixed payloads
+        run: bash ci-probe/build-pair.sh "$RUNNER_TEMP/herdr-latency-proof"
+      - name: Measure confirmed filesystem-reader holds
+        timeout-minutes: 15
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          python3 ci-probe/scan_stall_probe.py \
+            --repo "$GITHUB_WORKSPACE" \
+            --binaries "$RUNNER_TEMP/herdr-latency-proof" \
+            --out "$RUNNER_TEMP/herdr-latency-proof/observations"
+      - name: Retain measured results and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: latency-probe-linux-${{ github.sha }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/herdr-latency-proof/*.json
+            ${{ runner.temp }}/herdr-latency-proof/build-*.log
+            ${{ runner.temp }}/herdr-latency-proof/observations
