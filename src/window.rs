@@ -418,6 +418,8 @@ pub struct AppWindow {
     copies: HashMap<String, Copy>,
     overlays: Vec<Overlay>,
     folders: BTreeMap<String, Found>,
+    folder_scan: Option<Task<()>>,
+    folder_rescan: bool,
     /// Mods placed once; later the layout decides where (or whether) they show.
     seen: BTreeSet<String>,
     bounds: Rc<RefCell<HashMap<String, Bounds<Pixels>>>>,
@@ -541,6 +543,8 @@ impl AppWindow {
             copies: HashMap::new(),
             overlays: Vec::new(),
             folders: mods::scan().into_iter().map(|f| (f.id.clone(), f)).collect(),
+            folder_scan: None,
+            folder_rescan: false,
             seen,
             bounds: Default::default(),
             hidden_fit: Default::default(),
@@ -4339,7 +4343,28 @@ impl AppWindow {
         if self.runtime.is_none() {
             return;
         }
-        let found: BTreeMap<String, Found> = mods::scan().into_iter().map(|f| (f.id.clone(), f)).collect();
+        if self.folder_scan.is_some() {
+            self.folder_rescan = true;
+            return;
+        }
+        // A cold or busy filesystem must not hold up terminal input and painting.
+        let scan = cx.background_executor().spawn(async { mods::scan() });
+        self.folder_scan = Some(cx.spawn_in(window, async move |this, cx| {
+            let found = scan.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.folder_scan = None;
+                this.apply_folders(found, window, cx);
+                // An edit during the scan may not be in its result. Coalesce it,
+                // rather than starting a disk scan for every queued file event.
+                if std::mem::take(&mut this.folder_rescan) {
+                    this.sync_folders(window, cx);
+                }
+            });
+        }));
+    }
+
+    fn apply_folders(&mut self, found: Vec<Found>, window: &mut Window, cx: &mut Context<Self>) {
+        let found: BTreeMap<String, Found> = found.into_iter().map(|f| (f.id.clone(), f)).collect();
         let edited: BTreeSet<String> = found.values().filter(|f| self.folders.get(&f.id).is_some_and(|o| o.stamp != f.stamp)).map(|f| f.id.clone()).collect();
         let added = found.keys().any(|k| !self.folders.contains_key(k));
         let removed = self.folders.keys().any(|k| !found.contains_key(k));
@@ -7294,6 +7319,7 @@ export default class Probe extends View {
         });
     }
 
+    include!("window/folder_scan_tests.rs");
     include!("window/drag_tests.rs");
 
     /// The whole path, in a real window: a layout names the toast mod, a
@@ -7386,8 +7412,9 @@ export default class SystemToast extends View {
         std::fs::create_dir_all(&folder).unwrap();
         std::fs::write(folder.join("mod.json"), r#"{"place":"top"}"#).unwrap();
         std::fs::write(folder.join("main.js"), "").unwrap();
-        view.update_in(cx, |this, window, cx| {
-            this.sync_folders(window, cx);
+        view.update_in(cx, |this, window, cx| this.sync_folders(window, cx));
+        cx.run_until_parked();
+        view.update_in(cx, |this, _window, _cx| {
             assert_eq!(this.chrome.axis(), Some(crate::layout::Axis::Column));
             assert!(this.chrome.walk().iter().any(|n| matches!(
                 n.content(), Some(crate::layout::Content::Mod { name, .. }) if name == "new-top"
