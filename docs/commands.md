@@ -143,7 +143,7 @@ Give a running terminal without a pane (a sub-agent) a pane: a new tab, or "righ
 
 ## `terminal.park`
 
-Take a terminal's pane away and disable core keep; it keeps running (a sub-agent shows under its parent again).
+Take a terminal's pane away and disable core keep; it keeps running, out of the agents list.
 
 | Argument | Required |
 |---|---|
